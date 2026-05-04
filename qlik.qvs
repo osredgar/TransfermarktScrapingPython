@@ -1,0 +1,216 @@
+LIB CONNECT TO 'py_transfermarkt';
+
+Jogos:
+SQL SELECT
+    m.id AS CodigoJogo,
+    t.tournament AS Campeonato,
+    s.stadium AS Estadio,
+    r.referee AS Arbitro,
+    m.season AS Temporada,
+    CASE 
+        WHEN m.matchday LIKE "%oitavas%" THEN "Fase Final - Oitavas de final"
+        WHEN m.matchday LIKE "%quartas%" THEN "Fase Final - Quartas de final"
+        WHEN m.matchday LIKE "%semi%" THEN "Fase Final - Semifinal"
+        WHEN m.matchday LIKE "%final%" THEN "Fase Final - Final"
+        WHEN m.matchday LIKE "%eliminatória%" THEN "Fase Eliminatória"
+        WHEN m.matchday LIKE "%intermediária%" THEN "Fase Final - Fase Intermediária"
+        WHEN m.matchday LIKE "%terceiro%" THEN "Fase Final - Disputa Terceiro Lugar"
+        ELSE m.matchday
+    END AS Rodada,
+    m.date AS Data,
+    m.time AS Horario,
+    m.date ||" "|| m.time AS DataHorario,
+    CASE WHEN m.is_played = 0 THEN "Nao" ELSE "Sim" END AS JaRealizado,
+    CASE WHEN m.has_penalty = 0 THEN "Nao" ELSE "Sim" END AS DecisaoPorPenalti
+FROM matches m
+LEFT JOIN tournaments t ON t.id = m.tournament_id
+LEFT JOIN referees r ON r.id = m.referee_id
+LEFT JOIN stadiums s ON s.id = m.stadium_id
+;
+
+Adversarios:
+SQL SELECT
+    m.match_id AS CodigoJogo,
+    m.match_id ||"|"|| m.team_id AS CodigoJogoEquipe,
+    t.team AS Equipe,
+    CASE WHEN m.home_away = 0 THEN "Visitante" ELSE "Mandante" END AS MandoCampo
+FROM match_teams m
+INNER JOIN teams t ON t.id = m.team_id
+ORDER BY m.match_id, m.home_away DESC
+;
+
+TempConfronto:
+LOAD
+    CodigoJogo,
+    Equipe AS Mandante
+RESIDENT Adversarios
+WHERE MandoCampo = 'Mandante'
+;
+
+INNER JOIN (TempConfronto)
+LOAD
+    CodigoJogo,
+    Equipe AS Visitante
+RESIDENT Adversarios
+WHERE MandoCampo = 'Visitante'
+;
+
+INNER JOIN (Jogos)
+LOAD
+    CodigoJogo,
+    Mandante &' x '& Visitante  AS Confronto
+RESIDENT TempConfronto
+;
+
+DROP TABLE TempConfronto;
+
+Resultados:
+LOAD
+    CodigoJogoEquipe,
+    GolMarcado,
+    GolSofrido,
+    GolPenMarcado,
+    GolPenPerdido,
+    GolPenSofrido,
+    CartaoAmarelo,
+    CartaoVermelho,
+    SaldoGols,
+    If
+    (
+        PlacarPenalti,
+        If(GolPenMarcado > GolPenSofrido, 3, 0),
+        If(GolMarcado = GolSofrido, 1, If(GolMarcado >  GolSofrido, 3, 0))
+    ) AS Pontos
+;
+LOAD
+    match_id &'|'& team_id AS CodigoJogoEquipe,
+    goal_scored AS GolMarcado,
+    goal_conceded AS GolSofrido,
+    penalty_scored AS GolPenMarcado,
+    penalty_missed AS GolPenPerdido,
+    (total_pen_scored - penalty_scored) AS GolPenSofrido,
+    yellow_card AS CartaoAmarelo,
+    red_card AS CartaoVermelho,
+    (goal_scored - goal_conceded) AS SaldoGols,
+    has_penalty AS PlacarPenalti
+;
+SQL SELECT
+    r.match_id,
+    r.team_id,
+    r.goal_scored,
+    r.goal_conceded,
+    r.penalty_scored,
+    (SELECT Sum(penalty_scored) FROM results r2 WHERE r2.match_id = r.match_id) AS total_pen_scored,
+    r.penalty_missed,
+    r.yellow_card,
+    r.red_card,
+    r.penalty_scored IS NOT NULL AS has_penalty
+FROM results r
+;
+
+Eventos: 
+SQL SELECT
+    e.match_id ||"|"|| e.team_id AS CodigoJogoEquipe,
+    p.player AS Jogador,
+    e.time AS TempoRegulamentar,
+    e.extra_time AS Acrescimos,
+    e.time + e.extra_time AS TempoTotal,
+    e.kind AS Tipo,
+    CASE WHEN e.history = "" THEN NULL ELSE e.history END AS Historico,
+    CASE WHEN e.extra_time = 0 THEN "Nao" ELSE "Sim" END AS DuranteAcrescimos,
+    CASE WHEN e.time > 105 THEN "106-120" WHEN e.time > 90 THEN "91-105" WHEN e.time > 45 THEN "46-90" ELSE "0-45" END AS TempoJogo,
+    1 AS Valor
+FROM events e
+INNER JOIN players p ON p.id = e.player_id
+;
+
+// MODELO AGGR: Sum(AGGR(<FUNCAO>, <CAMPO>))
+
+// GolMarcadoTotalGeral
+Sum(AGGR(Sum({1} GolMarcado), CodigoJogo))
+
+// GolMarcadoTotal
+Sum(AGGR(Sum(GolMarcado), CodigoJogo))
+
+// GolMarcadoMandante
+Sum({$<MandoCampo={'Mandante'}, Equipe=>} GolMarcado)
+Sum({$<MandoCampo={'Mandante'}>} GolMarcado)
+
+// GolMarcadoVisitante
+Sum({$<MandoCampo={'Visitante'}>} GolMarcado)
+
+// GolSofridoTotal
+Sum(AGGR(Sum(GolSofrido), CodigoJogo))
+
+// GolSofridoMandante
+Sum({$<MandoCampo={'Mandante'}>} GolSofrido)
+
+// GolSofridoVisitante
+Sum({$<MandoCampo={'Visitante'}>} GolSofrido)
+
+// GolPenMarcadoMandante
+Sum(AGGR(Sum({$<MandoCampo={'Mandante'}>} GolPenMarcado), CodigoJogo))
+
+// GolPenMarcadoVisitante
+Sum(AGGR(Sum({$<MandoCampo={'Visitante'}>} GolPenMarcado), CodigoJogo))
+
+// PEN-TotalMarcado
+Sum(GolPenMarcado)
+
+// PEN-TotalPerdido
+Sum(GolPenPerdido)
+
+// PEN-TotalCobrancas
+= [PEN-TotalMarcado] + [PEN-TotalPerdido]
+
+// PEN-TaxaConversao
+= Alt([PEN-TotalMarcado] / [PEN-TotalCobrancas], 0)
+
+// Placar
+= If(ContemDisputaPenaltis = 'Sim', [GolPenMarcadoMandante] &' x '& [GolPenMarcadoVisitante] & ' (Pen)', [GolMarcadoMandante] &' x '& [GolSofridoMandante])
+
+// EventosGolMandante
+Sum({$<MandoCampo={'Mandante'}, Tipo={'Gol'}>} Valor)
+
+// EventosGolVisitante
+Sum({$<MandoCampo={'Visitante'}, Tipo={'Gol'}>} Valor)
+
+// ResultadosCartaoAmareloTotalGeral
+Sum({1} CartaoAmarelo)
+
+// ResultadosCartaoAmareloTotal
+Sum(CartaoAmarelo)
+
+// ResultadosCartaoAmareloMandante
+Sum({$<MandoCampo={'Mandante'}>} CartaoAmarelo)
+
+// ResultadosCartaoAmareloVisitante
+Sum({$<MandoCampo={'Visitante'}>} CartaoAmarelo)
+
+// ResultadosCartaoVermelhoTotalGeral
+Sum({1} CartaoVermelho)
+
+// ResultadosCartaoVermelhoTotal
+Sum(CartaoVermelho)
+
+// ResultadosCartaoVermelhoMandante
+Sum({$<MandoCampo={'Mandante'}>} CartaoVermelho)
+
+// ResultadosCartaoVermelhoVisitante
+Sum({$<MandoCampo={'Visitante'}>} CartaoVermelho)
+
+// EventosCartaoAmareloMandante
+Sum({$<MandoCampo={'Mandante'}, Tipo={'Cartão Amarelo'}>} Valor)
+
+// EventosCartaoAmareloVisitante
+Sum({$<MandoCampo={'Visitante'}, Tipo={'Cartão Amarelo'}>} Valor)
+
+// EventosCartaoVermelhoMandante
+Sum({$<MandoCampo={'Mandante'}, Tipo={'Cartão Vermelho'}>} Valor)
+
+// EventosCartaoVermelhoVisitante
+Sum({$<MandoCampo={'Visitante'}, Tipo={'Cartão Vermelho'}>} Valor)
+
+
+'CA'&EventosCartaoAmareloMandante &'+'& EventosCartaoAmareloVisitante &'|CV'& EventosCartaoVermelhoMandante &'+'& EventosCartaoVermelhoVisitante = 
+'CA'&ResultadosCartaoAmareloMandante &'+'& ResultadosCartaoAmareloVisitante &'|CV'& ResultadosCartaoVermelhoMandante &'+'& ResultadosCartaoVermelhoVisitante

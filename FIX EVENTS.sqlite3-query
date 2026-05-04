@@ -1,0 +1,20 @@
+-- database: ./database/transfermarkt.db
+
+SELECT
+    e.match_id,
+    SUM(CASE WHEN e.kind = "Cartão Amarelo" THEN 1 END) AS CA,
+    SUM(CASE WHEN e.kind = "Cartão Vermelho" THEN 1 END) AS CV
+FROM
+    events e
+WHERE e.match_id IN (38116, 48801, 49316, 49320, 49326, 49334, 49339, 49344, 49347, 53479, 53480, 1126205)
+GROUP BY e.match_id
+ORDER BY e.match_id
+;
+
+    
+
+
+DELETE FROM events
+WHERE e.kind = "Gol"
+AND e.history = "Chute A Gol"
+;

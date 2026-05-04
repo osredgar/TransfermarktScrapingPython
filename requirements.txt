@@ -1,0 +1,11 @@
+beautifulsoup4
+Flask
+Flask_RESTful
+pandas
+Pillow
+pyodbc
+pywin32
+requests
+streamlit
+plotly
+pysqlite3

@@ -1,0 +1,55 @@
+# Ambientes Virtuais (VENV)
+.venv/
+venv/
+ENV/
+env/
+
+# Compilação e Cache do Python
+**/__pycache__/
+*.py[cod]
+*$py.class
+.Python
+
+# Distribuição e Pacotes
+bin/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Testes e Cobertura
+htmlcov/
+.tox/
+.noseresults/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.pyo
+.pytest_cache/
+.hypothesis/
+
+# Configurações de IDE (Opcional, mas recomendado)
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Arquivos de Sistema
+.DS_Store
+Thumbs.db

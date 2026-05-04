@@ -1,0 +1,112 @@
+-- database: ./transfermarkt.db
+
+SELECT
+    matches.id AS CodigoJogo,
+    matches.date AS Data,
+    matches.time AS Hora,
+    matches.date ||' '|| matches.time AS DataHora,
+    CASE
+        WHEN matches.matchday LIKE "%Oitavas%" THEN "Oitavas de Final"
+        WHEN matches.matchday LIKE "%Quarta%" THEN "Quartas de Final"
+        WHEN matches.matchday LIKE "%Semi%" THEN "Semi-Final"
+        WHEN matches.matchday LIKE "%Final%" THEN "Final"
+        WHEN matches.matchday LIKE "%Terceiro%" THEN "Disputa de 3º Lugar"
+        ELSE matches.matchday
+    END AS Rodada, 
+    CASE
+        WHEN matches.matchday LIKE "%Grupo%" THEN "Fase de Grupo"
+        WHEN matches.matchday LIKE "%Rodada%" THEN "Pontos Corridos"
+        ELSE "Fase Final"
+    END AS Fase, 
+    tournaments.tournament AS Competicao,
+    matches.season AS Temporada,
+    tournaments.tournament ||' '|| matches.season AS CompeticaoTemporada,
+    stadiums.stadium AS Estadio,
+    referees.referee AS Arbitro,
+    CASE 
+        WHEN matches.is_played = 1 THEN "Realizado"
+        ELSE "A Realizar" 
+    END AS JaRealizado,
+    CASE 
+        WHEN matches.has_penalty = 0 THEN "Tempo Regulamentar"
+        ELSE "Decisao Por Penâltis" 
+    END AS TipoResultado,
+    home_team.team AS EquipeMandante,
+    away_team.team AS EquipeVisitante,
+    home_results.goal_scored AS GolsMarcadosMandante,
+    home_results.goal_conceded AS GolsSofridosMandante,
+    home_results.goal_scored - home_results.goal_conceded AS SaldoGolsMandante,
+    home_results.yellow_card AS CartoesAmarelosMandante,
+    home_results.red_card AS CartoesVermelhosMandante,
+    CASE
+        WHEN home_results.penalty_scored IS NULL THEN home_results.goal_scored
+        ELSE home_results.goal_scored + home_results.penalty_scored
+    END AS TotalGolsMarcadosMandante,
+    CASE 
+        WHEN home_results.penalty_scored IS NULL THEN 0 
+        ELSE home_results.penalty_scored 
+    END AS PenMarcadosMandante,
+    CASE 
+        WHEN home_results.penalty_missed IS NULL THEN 0 
+        ELSE home_results.penalty_missed 
+    END AS PenPerdidosMandante,
+    CASE
+        WHEN home_results.penalty_scored IS NULL THEN 0
+        ELSE home_results.penalty_scored + home_results.penalty_missed
+    END AS PenCobradosMandante,
+    away_results.goal_scored AS GolsMarcadosVisitante,
+    away_results.goal_conceded AS GolsSofridosVisitante,
+    away_results.goal_scored - away_results.goal_conceded AS SaldoGolsVisitante,
+    away_results.yellow_card AS CartoesAmarelosVisitante,
+    away_results.red_card AS CartoesVermelhosVisitante,
+    CASE
+        WHEN away_results.penalty_scored IS NULL THEN away_results.goal_scored
+        ELSE away_results.goal_scored + away_results.penalty_scored
+    END AS TotalGolsMarcadosVisitante,
+    CASE 
+        WHEN away_results.penalty_scored IS NULL THEN 0 
+        ELSE away_results.penalty_scored 
+    END AS PenMarcadosVisitante,
+    CASE 
+        WHEN away_results.penalty_missed IS NULL THEN 0 
+        ELSE away_results.penalty_missed 
+    END AS PenPerdidosVisitante,
+    CASE
+        WHEN away_results.penalty_scored IS NULL THEN 0
+        ELSE away_results.penalty_scored + away_results.penalty_missed
+    END AS PenCobradosVisitante,
+    CASE
+        WHEN home_results.penalty_scored IS NULL THEN
+            CASE
+                WHEN home_results.goal_scored > home_results.goal_conceded THEN 3
+                WHEN home_results.goal_scored = home_results.goal_conceded THEN 1
+                ELSE 0
+            END
+        WHEN home_results.penalty_scored > away_results.penalty_scored THEN 3
+        ELSE 0
+    END AS PontosMandante,
+    CASE
+        WHEN home_results.penalty_scored IS NULL THEN
+            CASE
+                WHEN home_results.goal_scored < home_results.goal_conceded THEN 3
+                WHEN home_results.goal_scored = home_results.goal_conceded THEN 1
+                ELSE 0
+            END
+        WHEN home_results.penalty_scored < away_results.penalty_scored THEN 3
+        ELSE 0
+    END AS PontosVisitante
+FROM matches
+INNER JOIN match_teams match_home ON match_home.match_id = matches.id AND match_home.home_away = 1
+INNER JOIN match_teams match_away ON match_away.match_id = matches.id AND match_away.home_away = 0
+INNER JOIN tournaments ON tournaments.id = matches.tournament_id
+INNER JOIN stadiums ON stadiums.id = matches.stadium_id
+INNER JOIN referees ON referees.id = matches.referee_id
+INNER JOIN teams home_team ON home_team.id = match_home.team_id
+INNER JOIN teams away_team ON away_team.id = match_away.team_id
+INNER JOIN results home_results ON home_results.match_id = match_home.match_id AND home_results.team_id = match_home.team_id
+INNER JOIN results away_results ON away_results.match_id = match_away.match_id AND away_results.team_id = match_away.team_id
+ORDER BY matches.season, matches.date ASC, matches.time ASC, matches.id ASC
+;
+
+
+
