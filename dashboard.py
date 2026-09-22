@@ -10,9 +10,6 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from model.db import SQLiteConnector
-from model.repo import DatabaseRepository
-
 db = SQLiteConnector()
 database = DatabaseRepository(db)
 retorno_banco_dados = database.get_all_matches(1)
