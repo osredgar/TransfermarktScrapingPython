@@ -9,6 +9,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR.parent / "database" / "transfermarkt.db"
 
 app = Flask(__name__)
+app.json.sort_keys = False
 
 
 class InvalidParameter(ValueError):
@@ -119,20 +120,31 @@ def image(filename):
 
 @app.get("/api/options")
 def options():
+    try:
+        tournament_id = optional_integer("tournament_id", minimum=1)
+    except InvalidParameter as error:
+        return jsonify({"error": str(error)}), 400
+
     with get_connection() as connection:
         tournaments = connection.execute(
             "SELECT id, tournament FROM tournaments ORDER BY tournament"
         ).fetchall()
-        seasons = connection.execute(
-            "SELECT DISTINCT season FROM matches WHERE season IS NOT NULL ORDER BY season DESC"
-        ).fetchall()
-        teams = connection.execute("SELECT id, team FROM teams ORDER BY team").fetchall()
+        seasons = []
+        if tournament_id is not None:
+            seasons = connection.execute(
+                """
+                SELECT DISTINCT season
+                FROM matches
+                WHERE tournament_id = ? AND season IS NOT NULL
+                ORDER BY season DESC
+                """,
+                (tournament_id,),
+            ).fetchall()
 
     return jsonify(
         {
             "tournaments": [dict(row) for row in tournaments],
             "seasons": [row["season"] for row in seasons],
-            "teams": [dict(row) for row in teams],
         }
     )
 
@@ -175,6 +187,40 @@ def matches():
             f"SELECT {fields} {joins} {where_sql} ORDER BY m.date DESC, m.time DESC, m.id DESC LIMIT ? OFFSET ?",
             [*parameters, filters["limit"], filters["offset"]],
         ).fetchall()
+        matches_data = [dict(row) for row in rows]
+        match_ids = [match["match_id"] for match in matches_data]
+
+        events_by_match = {match_id: [] for match_id in match_ids}
+        if match_ids:
+            placeholders = ", ".join("?" for _ in match_ids)
+            events = connection.execute(
+                f"""
+                SELECT
+                    event.match_id,
+                    event.team_id,
+                    team.team,
+                    event.player_id,
+                    player.player,
+                    event.kind,
+                    event.history,
+                    event.time,
+                    event.extra_time
+                FROM events AS event
+                LEFT JOIN teams AS team ON team.id = event.team_id
+                LEFT JOIN players AS player ON player.id = event.player_id
+                WHERE event.match_id IN ({placeholders})
+                ORDER BY event.match_id, event.time, event.extra_time, event.kind
+                """,
+                match_ids,
+            ).fetchall()
+
+            for event in events:
+                event_data = dict(event)
+                event_data.pop("match_id")
+                events_by_match[event["match_id"]].append(event_data)
+
+    for match in matches_data:
+        match["events"] = events_by_match[match["match_id"]]
 
     response_filters = {key: value for key, value in filters.items() if value is not None}
     return jsonify(
@@ -186,7 +232,7 @@ def matches():
                 "offset": filters["offset"],
                 "returned": len(rows),
             },
-            "data": [dict(row) for row in rows],
+            "data": matches_data,
         }
     )
 

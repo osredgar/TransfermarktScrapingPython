@@ -37,12 +37,8 @@
         </header>
         <section class="panel">
             <form id="search-form">
-                <label>Torneio<select name="tournament_id" id="tournament"><option value="">Todos</option></select></label>
-                <label>Temporada<select name="season" id="season"><option value="">Todas</option></select></label>
-                <label>Equipe<select name="team_id" id="team"><option value="">Todas</option></select></label>
-                <label>Data inicial<input type="date" name="date_from"></label>
-                <label>Data final<input type="date" name="date_to"></label>
-                <label>Status<select name="played"><option value="">Todos</option><option value="1">Realizada</option><option value="0">Nao realizada</option></select></label>
+                <label>Torneio<select name="tournament_id" id="tournament" required><option value="" selected disabled>Selecione um torneio</option></select></label>
+                <label>Temporada<select name="season" id="season" required disabled><option value="" selected disabled>Selecione um torneio primeiro</option></select></label>
                 <label>Limite<input type="number" name="limit" min="1" max="1000" value="100"></label>
                 <div class="actions"><button type="submit" id="search">Consultar</button><button class="secondary" type="button" id="download" disabled>Baixar JSON</button></div>
             </form>
@@ -58,21 +54,37 @@
         const downloadButton = document.querySelector("#download");
         let latestResult = null;
 
+        const tournamentSelect = document.querySelector("#tournament");
+        const seasonSelect = document.querySelector("#season");
+
         function populate(select, items, label) {
             for (const item of items) {
                 const option = document.createElement("option");
                 option.value = item.id ?? item;
-                option.textContent = label ? `${item.id} - ${item[label]}` : item;
+                option.textContent = label ? item[label] : item;
                 select.appendChild(option);
             }
         }
 
-        async function loadOptions() {
+        async function loadTournaments() {
             const response = await fetch("/api/options");
             const options = await response.json();
-            populate(document.querySelector("#tournament"), options.tournaments, "tournament");
-            populate(document.querySelector("#season"), options.seasons);
-            populate(document.querySelector("#team"), options.teams, "team");
+            populate(tournamentSelect, options.tournaments, "tournament");
+        }
+
+        async function loadSeasons() {
+            seasonSelect.innerHTML = "<option value=\"\" selected disabled>Selecione uma temporada</option>";
+            seasonSelect.disabled = true;
+            if (!tournamentSelect.value) return;
+
+            const response = await fetch(`/api/options?tournament_id=${tournamentSelect.value}`);
+            const options = await response.json();
+            if (!options.seasons.length) {
+                seasonSelect.innerHTML = "<option value=\"\" selected disabled>Nenhuma temporada salva</option>";
+                return;
+            }
+            populate(seasonSelect, options.seasons);
+            seasonSelect.disabled = false;
         }
 
         form.addEventListener("submit", async (event) => {
@@ -109,7 +121,11 @@
             URL.revokeObjectURL(link.href);
         });
 
-        loadOptions().catch((error) => { summary.textContent = error.message; });
+        tournamentSelect.addEventListener("change", () => {
+            loadSeasons().catch((error) => { summary.textContent = error.message; });
+        });
+
+        loadTournaments().catch((error) => { summary.textContent = error.message; });
     </script>
 </body>
 </html>
