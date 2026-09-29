@@ -1,47 +1,115 @@
 <!doctype html>
-<html lang="en">
-	<head>
-		<meta charset="UTF-8" />
-		<meta http-equiv="X-UA-Compatible" content="IE=edge" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>Transfermarkt Scraper API</title>
-	</head>
-	<body>
-		<h2>Transfermarkt Scraper API</h2>
-		<h5>Developed by Edgar Santa Rosa</h5>
-		<a title="Instagram" href="https://www.instagram.com/osredgar/">Instagram</a>
-		<br />
-		<a title="GitHub" href="https://github.com/osredgar">GitHub</a>
-		<br />
-		<p>I love football and also love data, so I'm sharing this tool with all of you.</p>
-		<p>Bellow what's important to know:</p>
-		<p>
-			To access the data from competition (check competition list bellow) you must append
-			<b>tm/competition_id/season_year</b>
-			to this URL.
-		</p>
-		<p>
-			For example, data from
-			<b>Brasileirão Serie A:</b>
-			<i>THIS_URL/tm/8/2022</i>
-		</p>
-		<h3>Competition List:</h3>
-		<ol>
-			<li>FIFA World Cup</li>
-			<li>CONMEBOL Libertadores</li>
-			<li>CONMEBOL Sudamericana</li>
-			<li>UEFA Champions League</li>
-			<li>UEFA Europa League</li>
-			<li>CONCACAF Champions League</li>
-			<li>AFC Champions League</li>
-			<li>Brasileirão Serie A (Brazil)</li>
-			<li>Major League Soccer (United States)</li>
-			<li>Premier League (England)</li>
-			<li>Ligue 1 (France)</li>
-			<li>Bundesliga (Germany)</li>
-			<li>LaLiga (Spain)</li>
-			<li>Eredivisie (Netherlands)</li>
-			<li>Liga NOS (Portugal)</li>
-		</ol>
-	</body>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transfermarkt Match API</title>
+    <style>
+        :root { color-scheme: light; font-family: Arial, sans-serif; }
+        body { margin: 0; background: #f3f5f7; color: #17212b; }
+        main { max-width: 1120px; margin: 0 auto; padding: 32px 20px; }
+        header { display: flex; align-items: center; gap: 14px; margin-bottom: 28px; }
+        header img { width: 42px; height: 42px; object-fit: contain; }
+        h1 { margin: 0; font-size: 24px; }
+        header p { margin: 4px 0 0; color: #53616f; }
+        .panel { background: #fff; border: 1px solid #d7dce1; padding: 20px; }
+        form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+        label { display: grid; gap: 6px; font-size: 14px; font-weight: 600; }
+        input, select, button { box-sizing: border-box; font: inherit; min-height: 38px; }
+        input, select { width: 100%; border: 1px solid #aeb8c2; padding: 7px 9px; background: #fff; }
+        .actions { display: flex; align-items: end; gap: 10px; }
+        button { border: 0; padding: 8px 14px; background: #006b5d; color: #fff; cursor: pointer; }
+        button.secondary { background: #40515f; }
+        button:disabled { opacity: .55; cursor: wait; }
+        .result-header { display: flex; justify-content: space-between; align-items: center; margin: 28px 0 10px; }
+        .result-header h2 { margin: 0; font-size: 18px; }
+        #summary { color: #53616f; font-size: 14px; }
+        pre { margin: 0; min-height: 220px; max-height: 540px; overflow: auto; padding: 18px; background: #17212b; color: #dff6ed; border: 1px solid #263746; font: 13px/1.45 Consolas, monospace; white-space: pre-wrap; }
+        .error { color: #ffb8b8; }
+        @media (max-width: 760px) { form { grid-template-columns: 1fr; } .actions { align-items: stretch; } }
+    </style>
+</head>
+<body>
+    <main>
+        <header>
+            <img src="/image/tmlogo.png" alt="Transfermarkt">
+            <div><h1>Consulta de partidas</h1><p>Dados salvos localmente no SQLite</p></div>
+        </header>
+        <section class="panel">
+            <form id="search-form">
+                <label>Torneio<select name="tournament_id" id="tournament"><option value="">Todos</option></select></label>
+                <label>Temporada<select name="season" id="season"><option value="">Todas</option></select></label>
+                <label>Equipe<select name="team_id" id="team"><option value="">Todas</option></select></label>
+                <label>Data inicial<input type="date" name="date_from"></label>
+                <label>Data final<input type="date" name="date_to"></label>
+                <label>Status<select name="played"><option value="">Todos</option><option value="1">Realizada</option><option value="0">Nao realizada</option></select></label>
+                <label>Limite<input type="number" name="limit" min="1" max="1000" value="100"></label>
+                <div class="actions"><button type="submit" id="search">Consultar</button><button class="secondary" type="button" id="download" disabled>Baixar JSON</button></div>
+            </form>
+        </section>
+        <div class="result-header"><h2>Resposta JSON</h2><span id="summary">Aguardando consulta</span></div>
+        <pre id="result">{}</pre>
+    </main>
+    <script>
+        const form = document.querySelector("#search-form");
+        const result = document.querySelector("#result");
+        const summary = document.querySelector("#summary");
+        const searchButton = document.querySelector("#search");
+        const downloadButton = document.querySelector("#download");
+        let latestResult = null;
+
+        function populate(select, items, label) {
+            for (const item of items) {
+                const option = document.createElement("option");
+                option.value = item.id ?? item;
+                option.textContent = label ? `${item.id} - ${item[label]}` : item;
+                select.appendChild(option);
+            }
+        }
+
+        async function loadOptions() {
+            const response = await fetch("/api/options");
+            const options = await response.json();
+            populate(document.querySelector("#tournament"), options.tournaments, "tournament");
+            populate(document.querySelector("#season"), options.seasons);
+            populate(document.querySelector("#team"), options.teams, "team");
+        }
+
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const parameters = new URLSearchParams(new FormData(form));
+            [...parameters.entries()].filter(([, value]) => !value).forEach(([key]) => parameters.delete(key));
+            searchButton.disabled = true;
+            summary.textContent = "Consultando...";
+            result.classList.remove("error");
+            try {
+                const response = await fetch(`/api/matches?${parameters}`);
+                const payload = await response.json();
+                result.textContent = JSON.stringify(payload, null, 2);
+                if (!response.ok) throw new Error(payload.error || "Erro ao consultar dados.");
+                latestResult = payload;
+                downloadButton.disabled = false;
+                summary.textContent = `${payload.pagination.returned} de ${payload.pagination.total} partidas`;
+            } catch (error) {
+                latestResult = null;
+                downloadButton.disabled = true;
+                result.classList.add("error");
+                summary.textContent = error.message;
+            } finally {
+                searchButton.disabled = false;
+            }
+        });
+
+        downloadButton.addEventListener("click", () => {
+            const blob = new Blob([JSON.stringify(latestResult, null, 2)], { type: "application/json" });
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = "transfermarkt-matches.json";
+            link.click();
+            URL.revokeObjectURL(link.href);
+        });
+
+        loadOptions().catch((error) => { summary.textContent = error.message; });
+    </script>
+</body>
 </html>

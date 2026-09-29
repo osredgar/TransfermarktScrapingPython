@@ -1,51 +1,195 @@
-import collections
-import json
+import sqlite3
+from datetime import date
+from pathlib import Path
 
-from flask import Flask, render_template
-from flask_restful import Api, Resource
-
-from database import DbConn
-
-# wrap the app in the api, initilizes it using restful
-app = Flask(__name__, template_folder="api_template")
-api = Api(app)
+from flask import Flask, jsonify, request, send_from_directory
 
 
-@app.route("/")
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = BASE_DIR.parent / "database" / "transfermarkt.db"
+
+app = Flask(__name__)
+
+
+class InvalidParameter(ValueError):
+    pass
+
+
+def get_connection():
+    connection = sqlite3.connect(f"{DB_PATH.as_uri()}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def optional_integer(name, minimum=None, maximum=None):
+    value = request.args.get(name)
+    if value in (None, ""):
+        return None
+
+    try:
+        number = int(value)
+    except ValueError as error:
+        raise InvalidParameter(f"'{name}' deve ser um numero inteiro.") from error
+
+    if minimum is not None and number < minimum:
+        raise InvalidParameter(f"'{name}' deve ser maior ou igual a {minimum}.")
+    if maximum is not None and number > maximum:
+        raise InvalidParameter(f"'{name}' deve ser menor ou igual a {maximum}.")
+
+    return number
+
+
+def optional_date(name):
+    value = request.args.get(name)
+    if value in (None, ""):
+        return None
+
+    try:
+        return date.fromisoformat(value).isoformat()
+    except ValueError as error:
+        raise InvalidParameter(f"'{name}' deve estar no formato AAAA-MM-DD.") from error
+
+
+def get_filters():
+    filters = {
+        "tournament_id": optional_integer("tournament_id", minimum=1),
+        "season": optional_integer("season", minimum=1),
+        "team_id": optional_integer("team_id", minimum=1),
+        "played": optional_integer("played", minimum=0, maximum=1),
+        "date_from": optional_date("date_from"),
+        "date_to": optional_date("date_to"),
+    }
+    filters["limit"] = optional_integer("limit", minimum=1, maximum=1000) or 100
+    filters["offset"] = optional_integer("offset", minimum=0) or 0
+
+    if filters["date_from"] and filters["date_to"] and filters["date_from"] > filters["date_to"]:
+        raise InvalidParameter("'date_from' nao pode ser posterior a 'date_to'.")
+
+    return filters
+
+
+def build_match_query(filters):
+    where_clauses = []
+    parameters = []
+
+    for field in ("tournament_id", "season", "played"):
+        if filters[field] is not None:
+            where_clauses.append(f"m.{field} = ?")
+            parameters.append(filters[field])
+
+    if filters["team_id"] is not None:
+        where_clauses.append("? IN (home_relation.team_id, away_relation.team_id)")
+        parameters.append(filters["team_id"])
+    if filters["date_from"]:
+        where_clauses.append("m.date >= ?")
+        parameters.append(filters["date_from"])
+    if filters["date_to"]:
+        where_clauses.append("m.date <= ?")
+        parameters.append(filters["date_to"])
+
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    joins = """
+        FROM matches AS m
+        JOIN tournaments AS tournament ON tournament.id = m.tournament_id
+        LEFT JOIN stadiums AS stadium ON stadium.id = m.stadium_id
+        LEFT JOIN referees AS referee ON referee.id = m.referee_id
+        LEFT JOIN match_teams AS home_relation
+            ON home_relation.match_id = m.id AND home_relation.home_away = 1
+        LEFT JOIN teams AS home_team ON home_team.id = home_relation.team_id
+        LEFT JOIN match_teams AS away_relation
+            ON away_relation.match_id = m.id AND away_relation.home_away = 0
+        LEFT JOIN teams AS away_team ON away_team.id = away_relation.team_id
+        LEFT JOIN results AS home_result
+            ON home_result.match_id = m.id AND home_result.team_id = home_relation.team_id
+        LEFT JOIN results AS away_result
+            ON away_result.match_id = m.id AND away_result.team_id = away_relation.team_id
+    """
+    return joins, where_sql, parameters
+
+
+@app.get("/")
 def index():
-    return render_template("index.html")
+    return send_from_directory(BASE_DIR, "index.html")
 
 
-class Transfermarkt(Resource):
-    def __init__(self):
-        self.db = DbConn("database.accdb")
-
-    def get(self, competition, season):
-        params_list = (
-            competition,
-            season,
-        )
-
-        competition_name = self.db.select_competition_name(competition)
-        arr_clubs = self.db.select_competition_clubs(params_list)
-        arr_players = self.db.select_competition_players(params_list)
-        arr_matches = self.db.select_competition_matches(params_list)
-        arr_results = self.db.select_competition_results(params_list)
-        arr_events = self.db.select_competition_events(params_list)
-        d = collections.OrderedDict()
-        d["competition"] = competition
-        d["season"] = season
-        d["competition_name"] = f'"{competition_name}"'
-        d["clubs"] = arr_clubs
-        d["players"] = arr_players
-        d["matches"] = arr_matches
-        d["results"] = arr_results
-        d["events"] = arr_events
-        return json.dumps(d)
+@app.get("/image/<path:filename>")
+def image(filename):
+    return send_from_directory(BASE_DIR.parent / "image", filename)
 
 
-# parameters<type:name>
-api.add_resource(Transfermarkt, "/tm/<int:competition>/<int:season>")
+@app.get("/api/options")
+def options():
+    with get_connection() as connection:
+        tournaments = connection.execute(
+            "SELECT id, tournament FROM tournaments ORDER BY tournament"
+        ).fetchall()
+        seasons = connection.execute(
+            "SELECT DISTINCT season FROM matches WHERE season IS NOT NULL ORDER BY season DESC"
+        ).fetchall()
+        teams = connection.execute("SELECT id, team FROM teams ORDER BY team").fetchall()
+
+    return jsonify(
+        {
+            "tournaments": [dict(row) for row in tournaments],
+            "seasons": [row["season"] for row in seasons],
+            "teams": [dict(row) for row in teams],
+        }
+    )
+
+
+@app.get("/api/matches")
+def matches():
+    try:
+        filters = get_filters()
+    except InvalidParameter as error:
+        return jsonify({"error": str(error)}), 400
+
+    joins, where_sql, parameters = build_match_query(filters)
+    fields = """
+        m.id AS match_id,
+        m.tournament_id,
+        tournament.tournament AS tournament,
+        m.season,
+        m.matchday,
+        m.date,
+        m.time,
+        m.is_played,
+        m.has_penalty,
+        home_relation.team_id AS home_team_id,
+        home_team.team AS home_team,
+        home_result.goal_scored AS home_goals,
+        home_result.penalty_scored AS home_penalties,
+        away_relation.team_id AS away_team_id,
+        away_team.team AS away_team,
+        away_result.goal_scored AS away_goals,
+        away_result.penalty_scored AS away_penalties,
+        stadium.stadium,
+        referee.referee
+    """
+
+    with get_connection() as connection:
+        total = connection.execute(
+            f"SELECT COUNT(*) {joins} {where_sql}", parameters
+        ).fetchone()[0]
+        rows = connection.execute(
+            f"SELECT {fields} {joins} {where_sql} ORDER BY m.date DESC, m.time DESC, m.id DESC LIMIT ? OFFSET ?",
+            [*parameters, filters["limit"], filters["offset"]],
+        ).fetchall()
+
+    response_filters = {key: value for key, value in filters.items() if value is not None}
+    return jsonify(
+        {
+            "filters": response_filters,
+            "pagination": {
+                "total": total,
+                "limit": filters["limit"],
+                "offset": filters["offset"],
+                "returned": len(rows),
+            },
+            "data": [dict(row) for row in rows],
+        }
+    )
+
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="127.0.0.1", port=5000, debug=False)
